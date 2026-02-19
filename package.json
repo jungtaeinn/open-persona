@@ -1,0 +1,73 @@
+{
+  "name": "open-persona",
+  "productName": "OpenPersona",
+  "version": "1.0.0",
+  "description": "macOS Desktop AI Chatbot with Character Personas - Gemini/OpenAI Multi-Model",
+  "main": ".webpack/main",
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "lint": "tsc --noEmit",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "changeset version && electron-forge make"
+  },
+  "author": "JUNGTAEINN",
+  "license": "MIT",
+  "keywords": [
+    "open-persona",
+    "openpersona",
+    "electron",
+    "macos",
+    "desktop-app",
+    "ai-chatbot",
+    "ai-bot",
+    "ai-agent",
+    "gemini",
+    "openai",
+    "llm",
+    "chat",
+    "persona",
+    "zustand",
+    "react"
+  ],
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "fs-xattr",
+      "macos-alias",
+      "protobufjs"
+    ]
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.5.2",
+    "@changesets/cli": "^2.29.8",
+    "@electron-forge/cli": "^7.6.0",
+    "@electron-forge/maker-dmg": "^7.6.0",
+    "@electron-forge/maker-zip": "^7.6.0",
+    "@electron-forge/plugin-webpack": "^7.6.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vercel/webpack-asset-relocator-loader": "^1.7.4",
+    "autoprefixer": "^10.4.20",
+    "css-loader": "^7.1.2",
+    "electron": "^34.0.0",
+    "fork-ts-checker-webpack-plugin": "^9.0.2",
+    "node-loader": "^2.0.0",
+    "postcss": "^8.5.1",
+    "postcss-loader": "^8.1.1",
+    "style-loader": "^4.0.0",
+    "tailwindcss": "^3.4.17",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@google/genai": "^1.1.0",
+    "electron-squirrel-startup": "^1.0.1",
+    "openai": "^4.80.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "zustand": "^5.0.0"
+  }
+}
