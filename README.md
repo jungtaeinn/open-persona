@@ -5,8 +5,6 @@
 
 ![OpenPersona main screen](./docs/screenshot-main.png)
 
-**Demo:** [Download video (MOV)](./docs/demo.mov)
-
 ---
 
 **A macOS desktop AI chatbot that lives in your menu bar.** Disney/Pixar-style characters sit at the bottom of your screen and chat with you in speech bubbles—each with a distinct personality and role (developer, doc expert, planner). Supports Gemini and OpenAI, with per-character conversation history, token usage tracking, and a glassmorphism UI.
