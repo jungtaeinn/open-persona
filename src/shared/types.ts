@@ -32,7 +32,7 @@ export interface ChatMessage {
 export interface StreamChunk {
   text: string;
   done: boolean;
-  toolCall?: { name: string; args: Record<string, unknown> };
+  toolCall?: { id: string; name: string; args: Record<string, unknown> };
   usage?: TokenUsageRaw;
 }
 
@@ -105,7 +105,10 @@ export type IpcMainChannels =
   | 'token:set-limit'
   | 'token:history'
   | 'memory:status'
-  | 'system:stats';
+  | 'system:stats'
+  | 'feedback:submit'
+  | 'knowledge:upload'
+  | 'rag:stats';
 
 /** Main -> Renderer IPC 채널 */
 export type IpcRendererChannels =

@@ -19,6 +19,9 @@ const ALLOWED_INVOKE_CHANNELS = [
   'token:history',
   'memory:status',
   'system:stats',
+  'feedback:submit',
+  'knowledge:upload',
+  'rag:stats',
 ] as const;
 
 const ALLOWED_RECEIVE_CHANNELS = [

@@ -2,13 +2,14 @@
  * AI 토큰 사용량 추적기.
  * 매 API 호출의 토큰 소비를 기록하고,
  * 일별/월별/모델별 요약과 예상 비용을 제공한다.
+ * 90일 이전 기록은 자동 프루닝한다.
  */
 import { app } from 'electron';
 import path from 'path';
-import fs from 'fs';
+import fs from 'fs/promises';
+import fsSync from 'fs';
 import type { TokenUsageRecord, TokenUsageRaw, TokenUsageSummary } from '../../shared/types';
 
-/** 모델별 토큰 1K당 비용 (USD) */
 const PRICING: Record<string, { input: number; output: number }> = {
   'gpt-4o':           { input: 0.0025,  output: 0.01 },
   'gpt-4o-mini':      { input: 0.00015, output: 0.0006 },
@@ -17,6 +18,8 @@ const PRICING: Record<string, { input: number; output: number }> = {
 };
 
 const FLUSH_THRESHOLD = 10;
+const PRUNE_DAYS = 90;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 interface LimitConfig {
   monthlyTokenLimit: number;
@@ -29,21 +32,17 @@ export class TokenTracker {
   private storagePath: string;
   private limitPath: string;
   private limits: LimitConfig = { monthlyTokenLimit: 0, monthlyCostLimit: 10 };
+  private flushInProgress = false;
 
   constructor() {
     const userDataPath = app?.getPath?.('userData') ?? '/tmp/taeinn-agent';
     this.storagePath = path.join(userDataPath, 'token-usage.json');
     this.limitPath = path.join(userDataPath, 'token-limits.json');
-    this.loadFromDisk();
-    this.loadLimits();
+    this.loadFromDiskSync();
+    this.loadLimitsSync();
+    this.pruneOldRecords();
   }
 
-  /**
-   * 토큰 사용량을 기록한다.
-   * @param provider - 프로바이더명
-   * @param model - 모델 ID
-   * @param usage - API 응답에서 추출한 토큰 수
-   */
   record(provider: string, model: string, usage: TokenUsageRaw): void {
     const record: TokenUsageRecord = {
       timestamp: Date.now(),
@@ -63,7 +62,6 @@ export class TokenTracker {
     }
   }
 
-  /** 오늘/이번달/모델별 요약을 반환한다 */
   getSummary(): TokenUsageSummary {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -90,7 +88,6 @@ export class TokenTracker {
     };
   }
 
-  /** 월간 한도를 설정한다 */
   setLimits(limits: Partial<LimitConfig>): void {
     if (limits.monthlyTokenLimit !== undefined) {
       this.limits.monthlyTokenLimit = limits.monthlyTokenLimit;
@@ -98,38 +95,58 @@ export class TokenTracker {
     if (limits.monthlyCostLimit !== undefined) {
       this.limits.monthlyCostLimit = limits.monthlyCostLimit;
     }
-    this.saveLimits();
+    void this.saveLimitsAsync();
   }
 
   getLimits(): LimitConfig {
     return { ...this.limits };
   }
 
-  /**
-   * 최근 N일간 기록을 반환한다.
-   * @param days - 조회할 일수
-   */
   getHistory(days: number): TokenUsageRecord[] {
-    const since = Date.now() - days * 24 * 60 * 60 * 1000;
+    const since = Date.now() - days * MS_PER_DAY;
     return this.records.filter((r) => r.timestamp >= since);
   }
 
-  /** 디스크에 저장한다 */
   async flush(): Promise<void> {
+    if (this.flushInProgress) return;
+    this.flushInProgress = true;
     this.pendingCount = 0;
     try {
       const dir = path.dirname(this.storagePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(this.storagePath, JSON.stringify(this.records, null, 2));
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(this.storagePath, JSON.stringify(this.records));
     } catch {
-      // 저장 실패 시 다음 flush 에서 재시도
+      // 저장 실패 시 다음 flush에서 재시도
+    } finally {
+      this.flushInProgress = false;
     }
   }
 
-  private loadLimits(): void {
+  /** 90일 이전 기록 제거 */
+  private pruneOldRecords(): void {
+    const cutoff = Date.now() - PRUNE_DAYS * MS_PER_DAY;
+    const before = this.records.length;
+    this.records = this.records.filter((r) => r.timestamp >= cutoff);
+    if (this.records.length < before) {
+      void this.flush();
+    }
+  }
+
+  private loadFromDiskSync(): void {
     try {
-      if (!fs.existsSync(this.limitPath)) return;
-      const data = fs.readFileSync(this.limitPath, 'utf-8');
+      if (!fsSync.existsSync(this.storagePath)) return;
+      const data = fsSync.readFileSync(this.storagePath, 'utf-8');
+      const parsed = JSON.parse(data);
+      this.records = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      this.records = [];
+    }
+  }
+
+  private loadLimitsSync(): void {
+    try {
+      if (!fsSync.existsSync(this.limitPath)) return;
+      const data = fsSync.readFileSync(this.limitPath, 'utf-8');
       const parsed = JSON.parse(data) as Partial<LimitConfig>;
       if (parsed.monthlyTokenLimit !== undefined) this.limits.monthlyTokenLimit = parsed.monthlyTokenLimit;
       if (parsed.monthlyCostLimit !== undefined) this.limits.monthlyCostLimit = parsed.monthlyCostLimit;
@@ -138,23 +155,13 @@ export class TokenTracker {
     }
   }
 
-  private saveLimits(): void {
+  private async saveLimitsAsync(): Promise<void> {
     try {
       const dir = path.dirname(this.limitPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(this.limitPath, JSON.stringify(this.limits, null, 2));
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(this.limitPath, JSON.stringify(this.limits));
     } catch {
       // 저장 실패 시 무시
-    }
-  }
-
-  private loadFromDisk(): void {
-    try {
-      if (!fs.existsSync(this.storagePath)) return;
-      const data = fs.readFileSync(this.storagePath, 'utf-8');
-      this.records = JSON.parse(data);
-    } catch {
-      this.records = [];
     }
   }
 
