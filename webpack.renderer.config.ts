@@ -31,8 +31,11 @@ class FixDirnamePlugin {
   }
 }
 
+const isProd = process.env.NODE_ENV === 'production';
+
 export const rendererConfig: Configuration = {
-  devtool: 'source-map',
+  devtool: isProd ? false : 'source-map',
+  mode: isProd ? 'production' : 'development',
   module: {
     rules: [
       ...rules,
@@ -47,6 +50,9 @@ export const rendererConfig: Configuration = {
       {
         test: /\.(png|jpg|jpeg|gif|svg|webp)$/,
         type: 'asset/resource',
+        generator: {
+          filename: 'assets/[hash:8][ext]',
+        },
       },
     ],
   },
@@ -55,5 +61,20 @@ export const rendererConfig: Configuration = {
   ],
   resolve: {
     extensions: ['.js', '.ts', '.jsx', '.tsx', '.css'],
+  },
+  optimization: {
+    minimize: isProd,
+    usedExports: true,
+    splitChunks: isProd ? {
+      chunks: 'all',
+      maxSize: 500_000,
+      cacheGroups: {
+        vendor: {
+          test: /[\\/]node_modules[\\/]/,
+          name: 'vendor',
+          priority: 10,
+        },
+      },
+    } : false,
   },
 };

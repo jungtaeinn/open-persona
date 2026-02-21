@@ -13,7 +13,10 @@ const config: ForgeConfig = {
     appBundleId: 'com.openpersona.app',
     appCategoryType: 'public.app-category.productivity',
     icon: './assets/icons/taeinn-bot',
-    extraResource: ['./assets'],
+    extraResource: [
+      './assets/knowledge',
+      './assets/icons',
+    ],
   },
   makers: [
     new MakerZIP({}, ['darwin']),

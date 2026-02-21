@@ -1,20 +1,20 @@
 {
   "name": "open-persona",
   "productName": "OpenPersona",
-  "version": "1.0.0",
-  "description": "macOS Desktop AI Chatbot with Character Personas - Gemini/OpenAI Multi-Model",
+  "version": "2.0.0",
+  "description": "RAG-powered macOS Desktop AI Agent with Expert Character Personas — Orchestration, Hybrid Search, Tool Calling, Continuous Learning (Gemini/OpenAI)",
   "main": ".webpack/main",
   "scripts": {
     "start": "electron-forge start",
-    "package": "electron-forge package",
-    "make": "electron-forge make",
+    "package": "NODE_ENV=production electron-forge package",
+    "make": "NODE_ENV=production electron-forge make",
     "lint": "tsc --noEmit",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset version && electron-forge make"
   },
   "author": "JUNGTAEINN",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "open-persona",
     "openpersona",
@@ -24,13 +24,23 @@
     "ai-chatbot",
     "ai-bot",
     "ai-agent",
+    "rag",
+    "retrieval-augmented-generation",
+    "orchestrator",
+    "tool-calling",
+    "hybrid-search",
+    "vector-db",
+    "vectra",
     "gemini",
     "openai",
     "llm",
+    "multimodal",
+    "continuous-learning",
     "chat",
     "persona",
     "zustand",
-    "react"
+    "react",
+    "typescript"
   ],
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -53,7 +63,6 @@
     "autoprefixer": "^10.4.20",
     "css-loader": "^7.1.2",
     "electron": "^34.0.0",
-    "fork-ts-checker-webpack-plugin": "^9.0.2",
     "node-loader": "^2.0.0",
     "postcss": "^8.5.1",
     "postcss-loader": "^8.1.1",
@@ -64,10 +73,12 @@
   },
   "dependencies": {
     "@google/genai": "^1.1.0",
-    "electron-squirrel-startup": "^1.0.1",
+    "exceljs": "^4.4.0",
+    "mammoth": "^1.11.0",
     "openai": "^4.80.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "vectra": "^0.12.3",
     "zustand": "^5.0.0"
   }
 }
