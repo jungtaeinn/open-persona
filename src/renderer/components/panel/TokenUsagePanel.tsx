@@ -180,19 +180,20 @@ export function TokenUsagePanel() {
   const [limitInput, setLimitInput] = useState('');
 
   useEffect(() => {
+    let isMounted = true;
     async function load() {
       try {
         const data = await window.electronAPI.invoke('token:summary') as TokenUsageSummary;
-        setSummary(data);
+        if (isMounted) setSummary(data);
       } catch {
         // 조회 실패 시 빈 상태 유지
       } finally {
-        setIsLoading(false);
+        if (isMounted) setIsLoading(false);
       }
     }
     void load();
     const interval = setInterval(load, 10_000);
-    return () => clearInterval(interval);
+    return () => { isMounted = false; clearInterval(interval); };
   }, []);
 
   const handleSaveLimit = useCallback(async () => {

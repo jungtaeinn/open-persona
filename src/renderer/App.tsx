@@ -2,7 +2,7 @@
  * 루트 앱 컴포넌트.
  * 캐릭터가 말풍선으로 답변 + 하단에 입력바.
  */
-import { Suspense, Component, type ReactNode, useMemo, useState, useCallback } from 'react';
+import { Suspense, Component, type ReactNode, useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { CharacterScene } from './components/scene/CharacterScene';
 import { BubbleChat, groupIntoPairs } from './components/chat/BubbleChat';
 import { TokenUsagePanel } from './components/panel/TokenUsagePanel';
@@ -10,10 +10,12 @@ import { SystemMonitorPanel } from './components/panel/SystemMonitorPanel';
 import { useAgentInit } from './hooks/use-agent';
 import { useAgentStore, selectMessages } from './stores/agent-store';
 import { getPersona } from '../shared/character-personas';
+import { MarkdownRenderer } from './components/chat/MarkdownRenderer';
 import type { AgentState } from '../shared/types';
 
-const GLOBAL_STYLE = document.createElement('style');
-GLOBAL_STYLE.textContent = `
+/* ───────── CSS (한 번만 주입) ───────── */
+
+const GLOBAL_CSS = `
   @keyframes speechBubblePop {
     0% { opacity: 0; transform: scale(0.5) translateY(10px); }
     14% { opacity: 1; transform: scale(1.1) translateY(-3px); }
@@ -30,6 +32,19 @@ GLOBAL_STYLE.textContent = `
     0%, 80%, 100% { transform: scale(0); }
     40% { transform: scale(1); }
   }
+  @keyframes progressPulse {
+    0%, 100% { opacity: 0.85; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.02); }
+  }
+  @keyframes progressDot {
+    0%, 20% { opacity: 0.3; }
+    50% { opacity: 1; }
+    80%, 100% { opacity: 0.3; }
+  }
+  @keyframes progressSlideIn {
+    0% { opacity: 0; transform: scale(0.6) translateY(10px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
   .answer-bubble-area:hover .answer-copy-btn {
     opacity: 1;
   }
@@ -38,39 +53,39 @@ GLOBAL_STYLE.textContent = `
     transition: opacity 0.15s ease;
   }
 `;
-if (!document.head.querySelector('[data-global-style]')) {
-  GLOBAL_STYLE.setAttribute('data-global-style', '');
-  document.head.appendChild(GLOBAL_STYLE);
+
+function injectStyleOnce(id: string, css: string) {
+  const existing = document.head.querySelector(`[data-style-id="${id}"]`);
+  if (existing) { existing.textContent = css; return; }
+  const el = document.createElement('style');
+  el.setAttribute('data-style-id', id);
+  el.textContent = css;
+  document.head.appendChild(el);
 }
+injectStyleOnce('global-style', GLOBAL_CSS);
+
+/* ───────── 상수 ───────── */
 
 const STATUS_LABELS: Record<AgentState, string> = {
-  idle: '업무 중',
-  listening: '듣는 중...',
-  thinking: '생각 중...',
-  acting: '작업 중',
-  responding: '답변 중',
-  done: 'Done',
+  idle: '업무 중', listening: '듣는 중...', thinking: '생각 중...',
+  acting: '작업 중', responding: '답변 중', done: 'Done',
 };
 
 const STATUS_COLORS: Record<AgentState, string> = {
-  idle: '#4ade80',
-  listening: '#4ade80',
-  thinking: '#facc15',
-  acting: '#f87171',
-  responding: '#60a5fa',
-  done: '#34d399',
+  idle: '#4ade80', listening: '#4ade80', thinking: '#facc15',
+  acting: '#f87171', responding: '#60a5fa', done: '#34d399',
 };
+
+/* ───────── Error Boundary ───────── */
 
 class SceneErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean; error: string }
 > {
   state = { hasError: false, error: '' };
-
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error: error.message };
   }
-
   render() {
     if (this.state.hasError) {
       return (
@@ -88,6 +103,8 @@ class SceneErrorBoundary extends Component<
   }
 }
 
+/* ───────── ActiveCharacterInfo ───────── */
+
 function ActiveCharacterInfo() {
   const activeCharacter = useAgentStore((s) => s.activeCharacter);
   const agentState = useAgentStore((s) => s.state);
@@ -104,9 +121,7 @@ function ActiveCharacterInfo() {
       }}>
         {activeCharacter.name}
       </span>
-      <span style={{
-        color: 'rgba(255, 255, 255, 0.5)', fontSize: '10px', fontWeight: 500,
-      }}>
+      <span style={{ color: 'rgba(255, 255, 255, 0.5)', fontSize: '10px', fontWeight: 500 }}>
         {activeCharacter.role}
       </span>
       <div style={{
@@ -120,15 +135,28 @@ function ActiveCharacterInfo() {
           background: STATUS_COLORS[agentState],
           boxShadow: `0 0 6px ${STATUS_COLORS[agentState]}`,
         }} />
-        <span style={{
-          color: 'rgba(255, 255, 255, 0.7)', fontSize: '10px', fontWeight: 500,
-        }}>
+        <span style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '10px', fontWeight: 500 }}>
           {STATUS_LABELS[agentState]}
         </span>
       </div>
     </div>
   );
 }
+
+/* ───────── Toast/Idle Talk 위치 계산 ───────── */
+
+type ToastPos = {
+  bottom: string; left?: string; right?: string;
+  tailAlign: 'left' | 'right'; borderRadius: string;
+};
+
+const TOAST_POSITIONS: Record<number, ToastPos> = {
+  0: { left: '8%',  bottom: '200px', tailAlign: 'left',  borderRadius: '16px 16px 6px 16px' },
+  1: { right: '28%', bottom: '220px', tailAlign: 'left',  borderRadius: '16px 16px 16px 6px' },
+  2: { right: '8%',  bottom: '190px', tailAlign: 'right', borderRadius: '16px 16px 6px 16px' },
+};
+
+/* ───────── CopyToastOverlay ───────── */
 
 function CopyToastOverlay() {
   const copyToastMessage = useAgentStore((s) => s.copyToastMessage);
@@ -143,27 +171,10 @@ function CopyToastOverlay() {
   if (!copyToastMessage) return null;
 
   const color = activeCharacter.color;
-
-  type ToastPos = {
-    bottom: string;
-    left?: string;
-    right?: string;
-    tailAlign: 'left' | 'right';
-    borderRadius: string;
-  };
-
-  const positionMap: Record<number, ToastPos> = {
-    0: { left: '8%',  bottom: '200px', tailAlign: 'left',  borderRadius: '16px 16px 6px 16px' },
-    1: { right: '28%', bottom: '220px', tailAlign: 'left',  borderRadius: '16px 16px 16px 6px' },
-    2: { right: '8%',  bottom: '190px', tailAlign: 'right', borderRadius: '16px 16px 6px 16px' },
-  };
-  const pos = positionMap[charIndex] ?? positionMap[1];
+  const pos = TOAST_POSITIONS[charIndex] ?? TOAST_POSITIONS[1];
 
   const outerPos: React.CSSProperties = {
-    position: 'absolute',
-    bottom: pos.bottom,
-    zIndex: 999,
-    pointerEvents: 'none',
+    position: 'absolute', bottom: pos.bottom, zIndex: 999, pointerEvents: 'none',
     animation: 'speechBubblePop 2.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
   };
   if (pos.left) outerPos.left = pos.left;
@@ -172,8 +183,7 @@ function CopyToastOverlay() {
   return (
     <div key={copyToastMessage} style={outerPos}>
       <div style={{
-        position: 'relative',
-        padding: '8px 16px',
+        position: 'relative', padding: '8px 16px',
         borderRadius: pos.borderRadius,
         background: `linear-gradient(135deg, ${color}cc, ${color}99)`,
         border: `1.5px solid ${color}`,
@@ -191,14 +201,140 @@ function CopyToastOverlay() {
         position: 'absolute', bottom: '-8px',
         ...(pos.tailAlign === 'right' ? { right: '18px' } : { left: '18px' }),
         width: 0, height: 0,
-        borderLeft: '8px solid transparent',
-        borderRight: '6px solid transparent',
+        borderLeft: '8px solid transparent', borderRight: '6px solid transparent',
         borderTop: `9px solid ${color}cc`,
         filter: `drop-shadow(0 2px 4px ${color}30)`,
       }} />
     </div>
   );
 }
+
+/* ───────── IdleTalkOverlay ───────── */
+
+function IdleTalkOverlay() {
+  const idleTalkMessage = useAgentStore((s) => s.idleTalkMessage);
+  const activeCharacter = useAgentStore((s) => s.activeCharacter);
+  const characters = useAgentStore((s) => s.characters);
+  const isChatOpen = useAgentStore((s) => s.isChatOpen);
+
+  const charIndex = useMemo(
+    () => characters.findIndex((c) => c.id === activeCharacter.id),
+    [characters, activeCharacter.id],
+  );
+
+  if (!idleTalkMessage || isChatOpen) return null;
+
+  const color = activeCharacter.color;
+  const pos = TOAST_POSITIONS[charIndex] ?? TOAST_POSITIONS[1];
+
+  const outerPos: React.CSSProperties = {
+    position: 'absolute', bottom: pos.bottom, zIndex: 998, pointerEvents: 'none',
+    animation: 'speechBubblePop 3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
+  };
+  if (pos.left) outerPos.left = pos.left;
+  if (pos.right) outerPos.right = pos.right;
+
+  return (
+    <div key={idleTalkMessage} style={outerPos}>
+      <div style={{
+        position: 'relative', padding: '8px 14px',
+        borderRadius: pos.borderRadius,
+        background: 'rgba(0, 0, 0, 0.55)',
+        backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+        border: `1.5px solid ${color}40`,
+        boxShadow: `0 4px 16px rgba(0,0,0,0.25), 0 0 20px ${color}10`,
+        whiteSpace: 'nowrap', maxWidth: '280px',
+      }}>
+        <span style={{
+          fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.9)',
+          textShadow: '0 1px 3px rgba(0,0,0,0.4)', letterSpacing: '-0.2px',
+        }}>
+          {idleTalkMessage}
+        </span>
+      </div>
+      <div style={{
+        position: 'absolute', bottom: '-8px',
+        ...(pos.tailAlign === 'right' ? { right: '18px' } : { left: '18px' }),
+        width: 0, height: 0,
+        borderLeft: '8px solid transparent', borderRight: '6px solid transparent',
+        borderTop: '9px solid rgba(0, 0, 0, 0.55)',
+      }} />
+    </div>
+  );
+}
+
+/* ───────── ToolProgressOverlay ───────── */
+
+function ToolProgressDots() {
+  return (
+    <span style={{ display: 'inline-flex', gap: '3px', marginLeft: '4px' }}>
+      {[0, 1, 2].map((i) => (
+        <span key={i} style={{
+          width: '4px', height: '4px', borderRadius: '50%',
+          background: 'rgba(255,255,255,0.8)',
+          animation: `progressDot 1.4s ease-in-out infinite`,
+          animationDelay: `${i * 0.2}s`,
+        }} />
+      ))}
+    </span>
+  );
+}
+
+function ToolProgressOverlay() {
+  const toolProgressMessage = useAgentStore((s) => s.toolProgressMessage);
+  const activeCharacter = useAgentStore((s) => s.activeCharacter);
+  const characters = useAgentStore((s) => s.characters);
+
+  const charIndex = useMemo(
+    () => characters.findIndex((c) => c.id === activeCharacter.id),
+    [characters, activeCharacter.id],
+  );
+
+  if (!toolProgressMessage) return null;
+
+  const color = activeCharacter.color;
+  const pos = TOAST_POSITIONS[charIndex] ?? TOAST_POSITIONS[1];
+
+  const outerPos: React.CSSProperties = {
+    position: 'absolute', bottom: pos.bottom, zIndex: 1000, pointerEvents: 'none',
+    animation: 'progressSlideIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
+  };
+  if (pos.left) outerPos.left = pos.left;
+  if (pos.right) outerPos.right = pos.right;
+
+  return (
+    <div style={outerPos}>
+      <div style={{
+        position: 'relative', padding: '9px 16px',
+        borderRadius: pos.borderRadius,
+        background: `linear-gradient(135deg, ${color}dd, ${color}aa)`,
+        border: `1.5px solid ${color}`,
+        boxShadow: `0 4px 24px ${color}50, 0 0 50px ${color}20`,
+        whiteSpace: 'nowrap',
+        animation: 'progressPulse 2s ease-in-out infinite',
+        display: 'flex', alignItems: 'center', gap: '2px',
+      }}>
+        <span style={{
+          fontSize: '13px', fontWeight: 700, color: 'white',
+          textShadow: '0 1px 3px rgba(0,0,0,0.3)', letterSpacing: '-0.3px',
+        }}>
+          {toolProgressMessage}
+        </span>
+        <ToolProgressDots />
+      </div>
+      <div style={{
+        position: 'absolute', bottom: '-8px',
+        ...(pos.tailAlign === 'right' ? { right: '18px' } : { left: '18px' }),
+        width: 0, height: 0,
+        borderLeft: '8px solid transparent', borderRight: '6px solid transparent',
+        borderTop: `9px solid ${color}dd`,
+        filter: `drop-shadow(0 2px 4px ${color}30)`,
+      }} />
+    </div>
+  );
+}
+
+/* ───────── TypingDots ───────── */
 
 function TypingDots() {
   return (
@@ -215,9 +351,16 @@ function TypingDots() {
   );
 }
 
+/* ───────── AnswerCopyButton (타이머 안전) ───────── */
+
 function AnswerCopyButton({ text, characterId }: { text: string; characterId: string }) {
   const showCopyToast = useAgentStore((s) => s.showCopyToast);
   const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
 
   const handleCopy = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -227,7 +370,8 @@ function AnswerCopyButton({ text, characterId }: { text: string; characterId: st
       const persona = getPersona(characterId);
       const msgs = persona.copyMessages;
       showCopyToast(msgs[Math.floor(Math.random() * msgs.length)]);
-      setTimeout(() => setCopied(false), 2200);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 2200);
     } catch { /* ignore */ }
   }, [text, characterId, showCopyToast]);
 
@@ -255,31 +399,17 @@ function AnswerCopyButton({ text, characterId }: { text: string; characterId: st
   );
 }
 
+/* ───────── Answer Bubble ───────── */
+
 type BubblePos = {
-  left: string;
-  right: string;
-  transform: string;
-  tailLeft?: string;
-  tailRight?: string;
-  borderRadius: string;
+  left: string; right: string; transform: string;
+  tailLeft?: string; tailRight?: string; borderRadius: string;
 };
 
 const BUBBLE_POSITIONS: Record<number, BubblePos> = {
-  0: {
-    left: '4%', right: 'auto', transform: 'none',
-    tailLeft: '22%',
-    borderRadius: '18px 18px 18px 6px',
-  },
-  1: {
-    left: '8%', right: '8%', transform: 'none',
-    tailLeft: '50%',
-    borderRadius: '18px 18px 6px 18px',
-  },
-  2: {
-    left: 'auto', right: '4%', transform: 'none',
-    tailRight: '22%',
-    borderRadius: '18px 18px 6px 18px',
-  },
+  0: { left: '4%', right: 'auto', transform: 'none', tailLeft: '22%', borderRadius: '18px 18px 18px 6px' },
+  1: { left: '8%', right: '8%', transform: 'none', tailLeft: '50%', borderRadius: '18px 18px 6px 18px' },
+  2: { left: 'auto', right: '4%', transform: 'none', tailRight: '22%', borderRadius: '18px 18px 6px 18px' },
 };
 
 function AnswerBubbleOverlay() {
@@ -304,19 +434,14 @@ function AnswerBubbleOverlay() {
   const pos = BUBBLE_POSITIONS[charIndex] ?? BUBBLE_POSITIONS[1];
 
   const containerStyle: React.CSSProperties = {
-    position: 'absolute',
-    bottom: '215px',
-    left: pos.left,
-    right: pos.right,
-    transform: pos.transform,
-    zIndex: 80,
-    pointerEvents: 'auto',
+    position: 'absolute', bottom: '215px',
+    left: pos.left, right: pos.right, transform: pos.transform,
+    zIndex: 80, pointerEvents: 'auto',
     animation: 'answerSlideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
     maxWidth: '75%',
   };
 
   const bubbleBg = 'rgba(0, 0, 0, 0.42)';
-
   const tailAlign = pos.tailLeft ?? 'auto';
   const tailAlignRight = pos.tailRight ?? 'auto';
 
@@ -330,8 +455,7 @@ function AnswerBubbleOverlay() {
       }}>
         <div style={{
           width: 0, height: 0,
-          borderLeft: '8px solid transparent',
-          borderRight: '7px solid transparent',
+          borderLeft: '8px solid transparent', borderRight: '7px solid transparent',
           borderTop: `9px solid ${bubbleBg}`,
         }} />
       </div>
@@ -346,32 +470,19 @@ function AnswerBubbleOverlay() {
           display: 'flex', alignItems: 'center', gap: '6px',
           padding: '0 8px', marginBottom: '5px',
         }}>
-          <span style={{
-            width: '7px', height: '7px', borderRadius: '50%',
-            background: color, boxShadow: `0 0 8px ${color}80`,
-          }} />
-          <span style={{ fontSize: '12px', fontWeight: 700, color }}>
-            {activeCharacter.name}
-          </span>
+          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}80` }} />
+          <span style={{ fontSize: '12px', fontWeight: 700, color }}>{activeCharacter.name}</span>
           <span style={{
             fontSize: '9px', fontWeight: 600, color,
             padding: '1px 6px', borderRadius: '6px',
             background: `${color}15`, border: `1px solid ${color}30`,
-          }}>
-            {activeCharacter.role}
-          </span>
+          }}>{activeCharacter.role}</span>
         </div>
         <div style={{
-          padding: '12px 16px',
-          borderRadius: pos.borderRadius,
-          background: bubbleBg,
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          border: `1px solid ${color}25`,
-          boxShadow: `0 4px 20px rgba(0,0,0,0.15)`,
-          color: 'rgba(255,255,255,0.88)',
-          fontSize: '13.5px',
-          lineHeight: '1.6',
+          padding: '12px 16px', borderRadius: pos.borderRadius,
+          background: bubbleBg, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+          border: `1px solid ${color}25`, boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+          color: 'rgba(255,255,255,0.88)', fontSize: '13.5px', lineHeight: '1.6',
         }}>
           {greeting}
         </div>
@@ -384,58 +495,33 @@ function AnswerBubbleOverlay() {
   const isLoading = !currentPair.answer || !answerText;
 
   return (
-    <div
-      key={currentPair.id}
-      className="answer-bubble-area"
-      style={containerStyle}
-    >
-      {/* 캐릭터 이름 + 복사 */}
+    <div key={currentPair.id} className="answer-bubble-area" style={containerStyle}>
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         padding: '0 8px', marginBottom: '5px',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{
-            width: '7px', height: '7px', borderRadius: '50%',
-            background: color, boxShadow: `0 0 8px ${color}80`,
-          }} />
-          <span style={{ fontSize: '12px', fontWeight: 700, color }}>
-            {activeCharacter.name}
-          </span>
+          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}80` }} />
+          <span style={{ fontSize: '12px', fontWeight: 700, color }}>{activeCharacter.name}</span>
         </div>
-        {answerText && (
-          <AnswerCopyButton text={answerText} characterId={activeCharacter.id} />
-        )}
+        {answerText && <AnswerCopyButton text={answerText} characterId={activeCharacter.id} />}
       </div>
-
-      {/* 말풍선 본체 */}
       <div style={{
-        padding: '12px 16px',
-        borderRadius: pos.borderRadius,
-        background: bubbleBg,
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        border: `1px solid ${color}28`,
-        boxShadow: `0 4px 24px rgba(0,0,0,0.18), 0 0 30px ${color}08`,
-        maxHeight: '220px',
-        overflowY: 'auto',
+        padding: '12px 16px', borderRadius: pos.borderRadius,
+        background: bubbleBg, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+        border: `1px solid ${color}28`, boxShadow: `0 4px 24px rgba(0,0,0,0.18), 0 0 30px ${color}08`,
+        maxHeight: '220px', overflowY: 'auto',
       }}>
-        {isLoading ? (
-          <TypingDots />
-        ) : (
-          <div style={{
-            fontSize: '13px', lineHeight: '1.65',
-            color: 'rgba(255,255,255,0.92)',
-            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-          }}>
-            {answerText}
-          </div>
+        {isLoading ? <TypingDots /> : (
+          <MarkdownRenderer text={answerText} accentColor={color} />
         )}
       </div>
       <BubbleTail />
     </div>
   );
 }
+
+/* ───────── Root App ───────── */
 
 export default function App() {
   useAgentInit();
@@ -450,11 +536,9 @@ export default function App() {
       display: 'flex', flexDirection: 'column',
       position: 'relative', userSelect: 'none', overflow: 'visible',
     }}>
-      {/* 패널 영역 (토큰 사용량 / 시스템 모니터) */}
       {hasPanel && (
         <div style={{
-          flex: 1, minHeight: 0,
-          WebkitAppRegion: 'no-drag',
+          flex: 1, minHeight: 0, WebkitAppRegion: 'no-drag',
           position: 'relative', zIndex: 50, pointerEvents: 'auto',
         } as React.CSSProperties}>
           {activePanel === 'token' && <TokenUsagePanel />}
@@ -462,25 +546,19 @@ export default function App() {
         </div>
       )}
 
-      {/* 캐릭터 씬 + 답변 말풍선 */}
       <div style={{
         position: 'relative',
         flex: hasPanel ? undefined : 1,
         height: hasPanel ? '260px' : undefined,
-        flexShrink: 0,
-        WebkitAppRegion: 'no-drag',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'flex-end',
+        flexShrink: 0, WebkitAppRegion: 'no-drag',
+        display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
         overflow: 'visible',
       } as React.CSSProperties}>
-        {/* 복사 말풍선 — 캐릭터 머리 위 (복사 시에만) */}
         <CopyToastOverlay />
-
-        {/* 답변 말풍선 — 캐릭터 머리 위 (채팅 열렸을 때) */}
+        <IdleTalkOverlay />
+        <ToolProgressOverlay />
         <AnswerBubbleOverlay />
 
-        {/* 캐릭터 이름/역할 - 채팅/패널 안 열렸을 때만 */}
         {!isChatOpen && !hasPanel && (
           <div style={{
             position: 'absolute', bottom: '210px',
@@ -490,10 +568,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 캐릭터 씬 */}
-        <div style={{
-          pointerEvents: (isChatOpen || hasPanel) ? 'none' : 'auto',
-        }}>
+        <div style={{ pointerEvents: (isChatOpen || hasPanel) ? 'none' : 'auto' }}>
           <SceneErrorBoundary>
             <Suspense fallback={null}>
               <CharacterScene />
@@ -501,7 +576,6 @@ export default function App() {
           </SceneErrorBoundary>
         </div>
 
-        {/* 버전 표기: OPENPERSONA by TAEINN v1.0.0 */}
         <div style={{
           position: 'absolute', bottom: '0px', right: '34px', zIndex: 30,
           display: 'flex', alignItems: 'baseline', gap: '5px', pointerEvents: 'none',
@@ -510,37 +584,25 @@ export default function App() {
           <span style={{
             fontSize: '9.5px', fontWeight: 600, letterSpacing: '1.8px',
             fontFamily: "'Outfit', sans-serif", textTransform: 'uppercase' as const,
-            color: 'rgba(255, 255, 255, 0.55)',
-            textShadow: '0 1px 4px rgba(0,0,0,0.4)',
-          }}>
-            OpenPersona
-          </span>
+            color: 'rgba(255, 255, 255, 0.55)', textShadow: '0 1px 4px rgba(0,0,0,0.4)',
+          }}>OpenPersona</span>
           <span style={{
             fontSize: '8px', fontWeight: 400, letterSpacing: '0.4px',
             fontFamily: "'Outfit', sans-serif",
-            color: 'rgba(255, 255, 255, 0.42)',
-            textShadow: '0 1px 3px rgba(0,0,0,0.3)',
-          }}>
-            by TAEINN
-          </span>
+            color: 'rgba(255, 255, 255, 0.42)', textShadow: '0 1px 3px rgba(0,0,0,0.3)',
+          }}>by TAEINN</span>
           <span style={{
             fontSize: '8px', fontWeight: 500, letterSpacing: '0.5px',
             fontFamily: "'Outfit', sans-serif",
-            color: 'rgba(255, 255, 255, 0.38)',
-            textShadow: '0 1px 3px rgba(0,0,0,0.3)',
-          }}>
-            v1.0.0
-          </span>
+            color: 'rgba(255, 255, 255, 0.38)', textShadow: '0 1px 3px rgba(0,0,0,0.3)',
+          }}>v2.0.0</span>
         </div>
       </div>
 
-      {/* 하단: 입력바 (채팅 열렸을 때만) */}
       {showChat && (
         <div style={{
-          flexShrink: 0,
-          WebkitAppRegion: 'no-drag',
-          pointerEvents: 'auto',
-          zIndex: 50,
+          flexShrink: 0, WebkitAppRegion: 'no-drag',
+          pointerEvents: 'auto', zIndex: 50,
         } as React.CSSProperties}>
           <BubbleChat />
         </div>

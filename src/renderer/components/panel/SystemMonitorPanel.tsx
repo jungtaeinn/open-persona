@@ -3,7 +3,7 @@
  * Electron 프로세스의 메모리(RSS/Heap), CPU 누적 시간, 업타임을 표시한다.
  * 메모리 히스토리를 미니 그래프로 그려 누수 추세를 시각화한다.
  */
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAgentStore } from '../../stores/agent-store';
 import type { SystemStats } from '../../../shared/types';
 
@@ -179,22 +179,23 @@ export function SystemMonitorPanel() {
   const [heapHistory, setHeapHistory] = useState<number[]>([]);
   const [isLeakSuspected, setIsLeakSuspected] = useState(false);
 
-  const poll = useCallback(async () => {
-    try {
-      const data = await window.electronAPI.invoke('system:stats') as SystemStats;
-      setStats(data);
-      setRssHistory((prev) => [...prev, data.memory.rss].slice(-MAX_HISTORY));
-      setHeapHistory((prev) => [...prev, data.memory.heapUsed].slice(-MAX_HISTORY));
-    } catch {
-      // 조회 실패 시 무시
-    }
-  }, []);
-
   useEffect(() => {
-    void poll();
-    const timer = setInterval(poll, POLL_INTERVAL);
-    return () => clearInterval(timer);
-  }, [poll]);
+    let isMounted = true;
+    async function doPoll() {
+      try {
+        const data = await window.electronAPI.invoke('system:stats') as SystemStats;
+        if (!isMounted) return;
+        setStats(data);
+        setRssHistory((prev) => [...prev, data.memory.rss].slice(-MAX_HISTORY));
+        setHeapHistory((prev) => [...prev, data.memory.heapUsed].slice(-MAX_HISTORY));
+      } catch {
+        // 조회 실패 시 무시
+      }
+    }
+    void doPoll();
+    const timer = setInterval(doPoll, POLL_INTERVAL);
+    return () => { isMounted = false; clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     if (rssHistory.length < 10) return;

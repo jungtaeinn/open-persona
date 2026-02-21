@@ -10,7 +10,7 @@ export type PanelType = 'none' | 'token' | 'system';
 const DEFAULT_CHARACTERS: AgentCharacterInfo[] = [
   { id: 'fox', name: 'Felix', role: 'Developer', modelFile: 'fox', color: '#f97316' },
   { id: 'pig', name: 'Done', role: 'Doc Expert', modelFile: 'pig', color: '#f472b6' },
-  { id: 'rabbit', name: 'Bomi', role: 'Planner', modelFile: 'rabbit', color: '#a78bfa' },
+  { id: 'rabbit', name: 'Bomi', role: 'Translator', modelFile: 'rabbit', color: '#a78bfa' },
 ];
 
 interface AgentStore {
@@ -24,6 +24,8 @@ interface AgentStore {
   activePanel: PanelType;
   tokenSummary: TokenUsageSummary | null;
   copyToastMessage: string | null;
+  idleTalkMessage: string | null;
+  toolProgressMessage: string | null;
   currentQAIndex: number;
 
   setState: (state: AgentState) => void;
@@ -38,6 +40,9 @@ interface AgentStore {
   setActivePanel: (panel: PanelType) => void;
   setTokenSummary: (summary: TokenUsageSummary) => void;
   showCopyToast: (message: string) => void;
+  showIdleTalk: (message: string) => void;
+  showToolProgress: (message: string) => void;
+  clearToolProgress: () => void;
   setCurrentQAIndex: (index: number) => void;
 }
 
@@ -52,6 +57,8 @@ export const useAgentStore = create<AgentStore>((set) => ({
   activePanel: 'none',
   tokenSummary: null,
   copyToastMessage: null,
+  idleTalkMessage: null,
+  toolProgressMessage: null,
   currentQAIndex: 0,
 
   setState: (state) => set({ state }),
@@ -142,12 +149,36 @@ export const useAgentStore = create<AgentStore>((set) => ({
   setTokenSummary: (summary) => set({ tokenSummary: summary }),
 
   showCopyToast: (message) => {
+    if (copyToastTimer) clearTimeout(copyToastTimer);
     set({ copyToastMessage: message });
-    setTimeout(() => set({ copyToastMessage: null }), 2200);
+    copyToastTimer = setTimeout(() => {
+      set({ copyToastMessage: null });
+      copyToastTimer = null;
+    }, 2200);
+  },
+
+  showIdleTalk: (message) => {
+    if (idleTalkTimer) clearTimeout(idleTalkTimer);
+    set({ idleTalkMessage: message });
+    idleTalkTimer = setTimeout(() => {
+      set({ idleTalkMessage: null });
+      idleTalkTimer = null;
+    }, 3000);
+  },
+
+  showToolProgress: (message) => {
+    set({ toolProgressMessage: message, idleTalkMessage: null });
+  },
+
+  clearToolProgress: () => {
+    set({ toolProgressMessage: null });
   },
 
   setCurrentQAIndex: (index) => set({ currentQAIndex: index }),
 }));
+
+let copyToastTimer: ReturnType<typeof setTimeout> | null = null;
+let idleTalkTimer: ReturnType<typeof setTimeout> | null = null;
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 

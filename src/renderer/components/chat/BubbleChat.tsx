@@ -1,25 +1,29 @@
 /**
  * 채팅 입력 UI.
- * 입력바 + 질문 칩 네비게이션 + 하단 버튼으로 구성.
+ * 입력바 + 이미지/파일 첨부 + 질문 칩 네비게이션 + 하단 버튼으로 구성.
  * 답변은 App.tsx의 AnswerBubbleOverlay에서 캐릭터 위 말풍선으로 표시.
  */
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useAgentStore, selectMessages } from '../../stores/agent-store';
-import { useChat } from '../../hooks/use-chat';
+import { useChat, type ChatAttachment } from '../../hooks/use-chat';
 import type { ChatMessage } from '../../../shared/types';
 
-const CHAT_STYLE = document.createElement('style');
-CHAT_STYLE.textContent = `
+const CHAT_CSS = `
   .chat-input:focus {
     outline: none;
     border-color: rgba(99, 102, 241, 0.5) !important;
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
   }
 `;
-if (!document.head.querySelector('[data-chat-input]')) {
-  CHAT_STYLE.setAttribute('data-chat-input', '');
-  document.head.appendChild(CHAT_STYLE);
+function injectStyleOnce(id: string, css: string) {
+  const existing = document.head.querySelector(`[data-style-id="${id}"]`);
+  if (existing) { existing.textContent = css; return; }
+  const el = document.createElement('style');
+  el.setAttribute('data-style-id', id);
+  el.textContent = css;
+  document.head.appendChild(el);
 }
+injectStyleOnce('chat-input', CHAT_CSS);
 
 export interface QAPair {
   id: string;
@@ -74,10 +78,12 @@ export function BubbleChat() {
   const toggleChat = useAgentStore((s) => s.toggleChat);
   const clearMessages = useAgentStore((s) => s.clearMessages);
   const setCurrentQAIndex = useAgentStore((s) => s.setCurrentQAIndex);
-  const { sendMessage } = useChat();
+  const { sendMessage, toolStatus } = useChat();
 
   const [text, setText] = useState('');
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isProcessing = agentState !== 'idle' && agentState !== 'done';
 
   const pairs = useMemo(() => groupIntoPairs(messages), [messages]);
@@ -87,15 +93,40 @@ export function BubbleChat() {
     setCurrentQAIndex(Math.max(pairs.length - 1, 0));
   }, [pairs.length, setCurrentQAIndex]);
 
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 100);
+    focusTimerRef.current = setTimeout(() => inputRef.current?.focus(), 100);
+    return () => { if (focusTimerRef.current) clearTimeout(focusTimerRef.current); };
+  }, []);
+
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    for (const file of Array.from(files)) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1] ?? '';
+        setAttachments((prev) => [
+          ...prev,
+          { name: file.name, mimeType: file.type, data: base64, dataType: 'base64' },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    }
+    e.target.value = '';
+  }, []);
+
+  const removeAttachment = useCallback((index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const handleSend = useCallback(() => {
-    if (!text.trim() || isProcessing) return;
-    sendMessage(text);
+    if ((!text.trim() && attachments.length === 0) || isProcessing) return;
+    sendMessage(text, attachments.length > 0 ? attachments : undefined);
     setText('');
-  }, [text, sendMessage, isProcessing]);
+    setAttachments([]);
+  }, [text, attachments, sendMessage, isProcessing]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -147,6 +178,46 @@ export function BubbleChat() {
         </div>
       )}
 
+      {/* 도구 실행 상태 표시 */}
+      {toolStatus && (
+        <div style={{
+          padding: '2px 12px 4px',
+          display: 'flex', alignItems: 'center', gap: '6px',
+        }}>
+          <div style={{
+            padding: '3px 10px', borderRadius: '10px',
+            background: 'rgba(99, 102, 241, 0.2)',
+            border: '1px solid rgba(99, 102, 241, 0.3)',
+            fontSize: '10px', color: 'rgba(199, 210, 254, 0.9)',
+            display: 'flex', alignItems: 'center', gap: '4px',
+          }}>
+            <span style={{ animation: 'pulse 1s infinite' }}>⚡</span>
+            {toolStatus}
+          </div>
+        </div>
+      )}
+
+      {/* 첨부 파일 미리보기 */}
+      {attachments.length > 0 && (
+        <div style={{ padding: '0 12px 4px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {attachments.map((att, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: '4px',
+              padding: '3px 8px', borderRadius: '10px',
+              background: 'rgba(99, 102, 241, 0.15)',
+              border: '1px solid rgba(99, 102, 241, 0.2)',
+              fontSize: '10px', color: 'rgba(255,255,255,0.7)',
+            }}>
+              {att.mimeType.startsWith('image/') ? '🖼️' : '📎'} {att.name}
+              <button onClick={() => removeAttachment(i)} style={{
+                background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)',
+                cursor: 'pointer', padding: '0 2px', fontSize: '10px',
+              }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 입력 바 */}
       <div style={{ padding: '0 12px 4px' }}>
         <div style={{
@@ -161,6 +232,34 @@ export function BubbleChat() {
           border: '1px solid rgba(255, 255, 255, 0.12)',
           boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)',
         }}>
+          {/* 파일 첨부 버튼 */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,.xlsx,.xls,.docx,.md,.txt,.json"
+            onChange={handleFileSelect}
+            style={{ display: 'none' }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isProcessing}
+            style={{
+              width: '28px', height: '28px', borderRadius: '50%',
+              background: 'rgba(255,255,255,0.08)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              cursor: isProcessing ? 'default' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0, transition: 'all 0.2s ease',
+              opacity: isProcessing ? 0.5 : 1,
+            }}
+            title="파일/이미지 첨부"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
+
           <input
             ref={inputRef}
             className="chat-input"
@@ -179,16 +278,16 @@ export function BubbleChat() {
           />
           <button
             onClick={handleSend}
-            disabled={!text.trim() || isProcessing}
+            disabled={(!text.trim() && attachments.length === 0) || isProcessing}
             style={{
               width: '30px', height: '30px', borderRadius: '50%',
-              background: text.trim() ? 'rgba(99, 102, 241, 0.8)' : 'rgba(255,255,255,0.1)',
-              border: 'none', cursor: text.trim() ? 'pointer' : 'default',
+              background: (text.trim() || attachments.length > 0) ? 'rgba(99, 102, 241, 0.8)' : 'rgba(255,255,255,0.1)',
+              border: 'none', cursor: (text.trim() || attachments.length > 0) ? 'pointer' : 'default',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               transition: 'all 0.2s ease', flexShrink: 0,
             }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={text.trim() ? 'white' : 'rgba(255,255,255,0.3)'} strokeWidth="2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={(text.trim() || attachments.length > 0) ? 'white' : 'rgba(255,255,255,0.3)'} strokeWidth="2">
               <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" />
             </svg>
           </button>
